@@ -64,7 +64,8 @@ class AICB_API_Handler {
 			return new WP_Error( 'no_api_key', 'API key not configured.', array( 'status' => 500 ) );
 		}
 
-		$messages_array = array();
+		$api_provider = get_option( 'aicb_api_provider', 'openai' );
+		$api_model = get_option( 'aicb_api_model', 'gpt-4o-mini' );
 		
 		$company_info = get_option( 'aicb_company_info', '' );
 		$system_content = "You are a helpful customer service assistant for our company. Answer questions based on the company information provided below. Be friendly, concise, and professional. If you don't know the answer, say so politely and suggest contacting the company directly.\n\nCOMPANY INFO:\n" . wp_strip_all_tags( $company_info );
@@ -73,24 +74,7 @@ class AICB_API_Handler {
 			$system_content .= "\n\nPrevious conversation summary: " . $session->summary;
 		}
 
-		$messages_array[] = array(
-			'role'    => 'system',
-			'content' => $system_content,
-		);
-
 		$recent_messages = AICB_DB_Manager::get_recent_messages( $session_id, 6 );
-		foreach ( $recent_messages as $msg ) {
-			$messages_array[] = array(
-				'role'    => $msg->role,
-				'content' => $msg->content,
-			);
-		}
-
-		// Add current message
-		$messages_array[] = array(
-			'role'    => 'user',
-			'content' => $message,
-		);
 
 		// Streaming Headers
 		header('Content-Type: text/event-stream');
@@ -102,50 +86,111 @@ class AICB_API_Handler {
 			ob_end_clean();
 		}
 
-		$api_model = get_option( 'aicb_api_model', 'gpt-4o-mini' );
-
-		$post_data = array(
-			'model'       => $api_model,
-			'messages'    => $messages_array,
-			'stream'      => true,
-			'temperature' => 0.7,
-		);
-
 		$full_response_text = '';
+		$ch = curl_init();
 
-		$ch = curl_init( 'https://api.openai.com/v1/chat/completions' );
-		curl_setopt( $ch, CURLOPT_HTTPHEADER, array(
-			'Content-Type: application/json',
-			'Authorization: Bearer ' . $api_key
-		));
-		curl_setopt( $ch, CURLOPT_POST, 1 );
-		curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $post_data ) );
-		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 0 ); 
-		
-		curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text ) {
-			$lines = explode( "\n", $data );
-			foreach ( $lines as $line ) {
-				$line = trim( $line );
-				if ( strpos( $line, 'data: ' ) === 0 ) {
-					$json_string = substr( $line, 6 );
-					if ( $json_string === '[DONE]' ) {
-						continue;
-					}
-					
-					$json_data = json_decode( $json_string, true );
-					if ( isset( $json_data['choices'][0]['delta']['content'] ) ) {
-						$content = $json_data['choices'][0]['delta']['content'];
-						$full_response_text .= $content;
+		if ( $api_provider === 'gemini' ) {
+			
+			$gemini_contents = array();
+			foreach ( $recent_messages as $msg ) {
+				$gemini_contents[] = array(
+					'role' => $msg->role === 'user' ? 'user' : 'model',
+					'parts' => array( array( 'text' => $msg->content ) )
+				);
+			}
+			$gemini_contents[] = array(
+				'role' => 'user',
+				'parts' => array( array( 'text' => $message ) )
+			);
+			
+			$post_data = array(
+				'systemInstruction' => array(
+					'role' => 'user',
+					'parts' => array( array( 'text' => $system_content ) )
+				),
+				'contents' => $gemini_contents
+			);
+			
+			$url = "https://generativelanguage.googleapis.com/v1beta/models/{$api_model}:streamGenerateContent?alt=sse&key={$api_key}";
+			
+			curl_setopt( $ch, CURLOPT_URL, $url );
+			curl_setopt( $ch, CURLOPT_HTTPHEADER, array('Content-Type: application/json') );
+			curl_setopt( $ch, CURLOPT_POST, 1 );
+			curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $post_data ) );
+			
+			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text ) {
+				$lines = explode( "\n", $data );
+				foreach ( $lines as $line ) {
+					$line = trim( $line );
+					if ( strpos( $line, 'data: ' ) === 0 ) {
+						$json_string = substr( $line, 6 );
+						if ( $json_string === '[DONE]' ) continue;
 						
-						echo "data: " . json_encode( array( 'content' => $content ) ) . "\n\n";
-						ob_flush();
-						flush();
+						$json_data = json_decode( $json_string, true );
+						if ( isset( $json_data['candidates'][0]['content']['parts'][0]['text'] ) ) {
+							$content = $json_data['candidates'][0]['content']['parts'][0]['text'];
+							$full_response_text .= $content;
+							
+							echo "data: " . json_encode( array( 'content' => $content ) ) . "\n\n";
+							ob_flush();
+							flush();
+						}
 					}
 				}
-			}
-			return strlen( $data );
-		});
+				return strlen( $data );
+			});
 
+		} else {
+			
+			// OpenAI and Groq format
+			$messages_array = array();
+			$messages_array[] = array( 'role' => 'system', 'content' => $system_content );
+			foreach ( $recent_messages as $msg ) {
+				$messages_array[] = array( 'role' => $msg->role, 'content' => $msg->content );
+			}
+			$messages_array[] = array( 'role' => 'user', 'content' => $message );
+
+			$post_data = array(
+				'model'       => $api_model,
+				'messages'    => $messages_array,
+				'stream'      => true,
+				'temperature' => 0.7,
+			);
+
+			$url = ( $api_provider === 'groq' ) ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
+
+			curl_setopt( $ch, CURLOPT_URL, $url );
+			curl_setopt( $ch, CURLOPT_HTTPHEADER, array(
+				'Content-Type: application/json',
+				'Authorization: Bearer ' . $api_key
+			));
+			curl_setopt( $ch, CURLOPT_POST, 1 );
+			curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $post_data ) );
+			
+			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text ) {
+				$lines = explode( "\n", $data );
+				foreach ( $lines as $line ) {
+					$line = trim( $line );
+					if ( strpos( $line, 'data: ' ) === 0 ) {
+						$json_string = substr( $line, 6 );
+						if ( $json_string === '[DONE]' ) continue;
+						
+						$json_data = json_decode( $json_string, true );
+						if ( isset( $json_data['choices'][0]['delta']['content'] ) ) {
+							$content = $json_data['choices'][0]['delta']['content'];
+							$full_response_text .= $content;
+							
+							echo "data: " . json_encode( array( 'content' => $content ) ) . "\n\n";
+							ob_flush();
+							flush();
+						}
+					}
+				}
+				return strlen( $data );
+			});
+		}
+
+		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 0 ); 
 		curl_exec( $ch );
 		$http_code = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
 		curl_close( $ch );
@@ -166,13 +211,13 @@ class AICB_API_Handler {
 
 		$session = AICB_DB_Manager::get_or_create_session( $session_id, $ip_address );
 		if ( $session->message_count % 4 === 0 && $session->message_count > 0 ) {
-			$this->generate_summary( $session_id, $session->summary, $recent_messages, $api_key, $api_model );
+			$this->generate_summary( $session_id, $session->summary, $recent_messages, $api_key, $api_model, $api_provider );
 		}
 
 		exit; // Stop WP execution after streaming
 	}
 
-	private function generate_summary( $session_id, $old_summary, $recent_messages, $api_key, $api_model ) {
+	private function generate_summary( $session_id, $old_summary, $recent_messages, $api_key, $api_model, $api_provider ) {
 		$transcript = '';
 		foreach ( $recent_messages as $msg ) {
 			$role = $msg->role === 'user' ? 'User' : 'Assistant';
@@ -181,28 +226,58 @@ class AICB_API_Handler {
 
 		$prompt = "Summarize this conversation in 2-3 sentences, focusing on the user intent and key topics discussed.\n\nOld Summary:\n" . $old_summary . "\n\nRecent Transcript:\n" . $transcript;
 
-		$post_data = array(
-			'model'       => $api_model,
-			'messages'    => array(
-				array( 'role' => 'user', 'content' => $prompt )
-			),
-			'stream'      => false,
-		);
+		if ( $api_provider === 'gemini' ) {
+			$post_data = array(
+				'contents' => array(
+					array(
+						'role' => 'user',
+						'parts' => array( array( 'text' => $prompt ) )
+					)
+				)
+			);
+			$url = "https://generativelanguage.googleapis.com/v1beta/models/{$api_model}:generateContent?key={$api_key}";
+			$headers = array( 'Content-Type' => 'application/json' );
+			
+			$response = wp_remote_post( $url, array(
+				'headers' => $headers,
+				'body'    => json_encode( $post_data ),
+				'timeout' => 15,
+			) );
 
-		$response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', array(
-			'headers' => array(
-				'Content-Type'  => 'application/json',
-				'Authorization' => 'Bearer ' . $api_key,
-			),
-			'body'    => json_encode( $post_data ),
-			'timeout' => 15,
-		) );
+			if ( ! is_wp_error( $response ) ) {
+				$body = json_decode( wp_remote_retrieve_body( $response ), true );
+				if ( isset( $body['candidates'][0]['content']['parts'][0]['text'] ) ) {
+					$new_summary = trim( $body['candidates'][0]['content']['parts'][0]['text'] );
+					AICB_DB_Manager::update_summary( $session_id, $new_summary );
+				}
+			}
 
-		if ( ! is_wp_error( $response ) ) {
-			$body = json_decode( wp_remote_retrieve_body( $response ), true );
-			if ( isset( $body['choices'][0]['message']['content'] ) ) {
-				$new_summary = trim( $body['choices'][0]['message']['content'] );
-				AICB_DB_Manager::update_summary( $session_id, $new_summary );
+		} else {
+			$post_data = array(
+				'model'       => $api_model,
+				'messages'    => array(
+					array( 'role' => 'user', 'content' => $prompt )
+				),
+				'stream'      => false,
+			);
+
+			$url = ( $api_provider === 'groq' ) ? 'https://api.groq.com/openai/v1/chat/completions' : 'https://api.openai.com/v1/chat/completions';
+
+			$response = wp_remote_post( $url, array(
+				'headers' => array(
+					'Content-Type'  => 'application/json',
+					'Authorization' => 'Bearer ' . $api_key,
+				),
+				'body'    => json_encode( $post_data ),
+				'timeout' => 15,
+			) );
+
+			if ( ! is_wp_error( $response ) ) {
+				$body = json_decode( wp_remote_retrieve_body( $response ), true );
+				if ( isset( $body['choices'][0]['message']['content'] ) ) {
+					$new_summary = trim( $body['choices'][0]['message']['content'] );
+					AICB_DB_Manager::update_summary( $session_id, $new_summary );
+				}
 			}
 		}
 	}

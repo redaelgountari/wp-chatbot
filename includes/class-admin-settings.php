@@ -41,6 +41,7 @@ class AICB_Admin_Settings {
 	}
 
 	public function register_settings() {
+		register_setting( 'aicb_settings_group', 'aicb_api_provider', 'sanitize_text_field' );
 		register_setting( 'aicb_settings_group', 'aicb_api_key', 'sanitize_text_field' );
 		register_setting( 'aicb_settings_group', 'aicb_api_model', 'sanitize_text_field' );
 		register_setting( 'aicb_settings_group', 'aicb_company_info', 'wp_kses_post' );
@@ -69,20 +70,27 @@ class AICB_Admin_Settings {
 				?>
 				<table class="form-table">
 					<tr>
+						<th scope="row"><label for="aicb_api_provider">API Provider</label></th>
+						<td>
+							<select id="aicb_api_provider" name="aicb_api_provider">
+								<option value="openai" <?php selected( get_option( 'aicb_api_provider', 'openai' ), 'openai' ); ?>>OpenAI</option>
+								<option value="groq" <?php selected( get_option( 'aicb_api_provider' ), 'groq' ); ?>>Groq</option>
+								<option value="gemini" <?php selected( get_option( 'aicb_api_provider' ), 'gemini' ); ?>>Google Gemini</option>
+							</select>
+						</td>
+					</tr>
+					<tr>
 						<th scope="row"><label for="aicb_api_key">API Key</label></th>
 						<td>
 							<input type="password" id="aicb_api_key" name="aicb_api_key" value="<?php echo esc_attr( get_option( 'aicb_api_key' ) ); ?>" class="regular-text" />
-							<p class="description">Your OpenAI API Key.</p>
+							<p class="description">Your API Key for the selected provider.</p>
 						</td>
 					</tr>
 					<tr>
 						<th scope="row"><label for="aicb_api_model">AI Model</label></th>
 						<td>
-							<select id="aicb_api_model" name="aicb_api_model">
-								<option value="gpt-4o-mini" <?php selected( get_option( 'aicb_api_model', 'gpt-4o-mini' ), 'gpt-4o-mini' ); ?>>GPT-4o Mini (Recommended)</option>
-								<option value="gpt-4o" <?php selected( get_option( 'aicb_api_model' ), 'gpt-4o' ); ?>>GPT-4o</option>
-								<option value="gpt-3.5-turbo" <?php selected( get_option( 'aicb_api_model' ), 'gpt-3.5-turbo' ); ?>>GPT-3.5 Turbo</option>
-							</select>
+							<input type="text" id="aicb_api_model" name="aicb_api_model" value="<?php echo esc_attr( get_option( 'aicb_api_model', 'gpt-4o-mini' ) ); ?>" class="regular-text" />
+							<p class="description">Type the exact model name. e.g., <code>gpt-4o-mini</code> (OpenAI), <code>llama3-8b-8192</code> (Groq), <code>gemini-1.5-flash</code> (Gemini).</p>
 						</td>
 					</tr>
 					<tr>
