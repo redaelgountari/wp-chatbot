@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Chatbot
  * Description: An AI-powered chatbot that answers visitor questions using your company info.
- * Version: 1.0.4
+ * Version: 1.0.5
  * Author: AI Chatbot
  */
 
@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AICB_VERSION', '1.0.4' );
+define( 'AICB_VERSION', '1.0.5' );
 define( 'AICB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AICB_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
