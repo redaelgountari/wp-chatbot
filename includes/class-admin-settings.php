@@ -102,7 +102,7 @@ class AICB_Admin_Settings {
 					<tr>
 						<th scope="row"><label for="aicb_welcome_message">Welcome Message</label></th>
 						<td>
-							<input type="text" id="aicb_welcome_message" name="aicb_welcome_message" value="<?php echo esc_attr( get_option( 'aicb_welcome_message', 'Hello! How can I help you today?' ) ); ?>" class="regular-text" />
+							<input type="text" id="aicb_welcome_message" name="aicb_welcome_message" value="<?php echo esc_attr( get_option( 'aicb_welcome_message', "Bonjour ! 👋 Comment puis-je vous aider aujourd'hui ?" ) ); ?>" class="regular-text" />
 						</td>
 					</tr>
 					<tr>

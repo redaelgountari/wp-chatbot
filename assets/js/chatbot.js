@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', function () {
   // ---------------------------------------------------------------------------
   const fontLink = document.createElement('link');
   fontLink.rel = 'stylesheet';
-  fontLink.href = 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap';
+  fontLink.href = 'https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&family=Playfair+Display:ital,wght@0,600;0,700;1,600&display=swap';
   document.head.appendChild(fontLink);
 
   // ---------------------------------------------------------------------------
@@ -37,18 +37,33 @@ document.addEventListener('DOMContentLoaded', function () {
   </svg>`;
 
   // ---------------------------------------------------------------------------
+  // 2b. Dynamic Configuration & State
+  // ---------------------------------------------------------------------------
+  const BOT_NAME      = (typeof aicb_ajax !== 'undefined' && aicb_ajax.bot_name) ? aicb_ajax.bot_name : 'AI Assistant';
+  const WELCOME_MSG   = (typeof aicb_ajax !== 'undefined' && aicb_ajax.welcome_message) ? aicb_ajax.welcome_message : "Bonjour ! 👋 Comment puis-je vous aider aujourd'hui ?";
+  
+  let isFirstOpen    = true;
+  let isSending      = false;
+  let lastMessageTs  = 0;
+  const RATE_LIMIT_MS = 2000; // 2 seconds between messages
+
+  // ---------------------------------------------------------------------------
   // 3. Inject Chat Widget HTML
   // ---------------------------------------------------------------------------
   const widgetHTML = `
     <div class="aicb-chat-bubble" id="aicb-bubble" role="button" aria-label="Open chat" tabindex="0">
-      ${ICON_CHAT}
+      <div class="aicb-bubble-icon">${ICON_CHAT}</div>
     </div>
     <div class="aicb-chat-window" id="aicb-window" role="dialog" aria-label="Chat window">
       <div class="aicb-chat-header">
         <div class="aicb-header-info">
-          <span class="aicb-status-dot" aria-hidden="true"></span>
-          <span class="aicb-bot-name">AI Assistant</span>
-          <span class="aicb-status-text">Online</span>
+          <div class="aicb-avatar">
+            G
+          </div>
+          <div class="aicb-header-text">
+            <span class="aicb-bot-name">${BOT_NAME}</span>
+            <span class="aicb-status-text">Glorious Groupe</span>
+          </div>
         </div>
         <button class="aicb-close-btn" id="aicb-close" aria-label="Close chat">
           ${ICON_CLOSE}
@@ -86,15 +101,6 @@ document.addEventListener('DOMContentLoaded', function () {
   const sendBtn  = document.getElementById('aicb-send');
 
   // ---------------------------------------------------------------------------
-  // 5. State
-  // ---------------------------------------------------------------------------
-  let isFirstOpen    = true;
-  let isSending      = false;
-  let lastMessageTs  = 0;
-  const RATE_LIMIT_MS = 2000; // 2 seconds between messages
-  const WELCOME_MSG  = "Hello! 👋 I'm your AI assistant. How can I help you today?";
-
-  // ---------------------------------------------------------------------------
   // 6. Session Management
   // ---------------------------------------------------------------------------
   function generateUUID() {
@@ -122,44 +128,168 @@ document.addEventListener('DOMContentLoaded', function () {
   // 7. Toggle Chat Window
   // ---------------------------------------------------------------------------
   function openChat() {
-    chatWin.style.display = 'flex';
-    // Force reflow so the CSS transition triggers
-    void chatWin.offsetHeight;
     chatWin.classList.add('active');
     bubble.classList.add('aicb-hidden');
-    input.focus();
+    setTimeout(function() {
+      input.focus();
+    }, 150);
 
     if (isFirstOpen) {
       isFirstOpen = false;
       createMessage('assistant', WELCOME_MSG);
+      createSuggestionChips([
+        'Quels sont vos projets ?',
+        'Quels services proposez-vous ?',
+        'Comment puis-je vous contacter ?'
+      ]);
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 7b. Suggestion Chips
+  // ---------------------------------------------------------------------------
+  function removeSuggestionChips() {
+    var existing = document.querySelectorAll('.aicb-suggestions');
+    existing.forEach(function(el) { el.remove(); });
+  }
+
+  function createSuggestionChips(suggestions) {
+    if (!suggestions || suggestions.length === 0) return;
+    removeSuggestionChips();
+
+    var container = document.createElement('div');
+    container.className = 'aicb-suggestions';
+
+    suggestions.forEach(function(text) {
+      var chip = document.createElement('button');
+      chip.className = 'aicb-suggestion-chip';
+      chip.textContent = text;
+      chip.addEventListener('click', function() {
+        removeSuggestionChips();
+        input.value = text;
+        sendMessage();
+      });
+      container.appendChild(chip);
+    });
+
+    messages.appendChild(container);
+    scrollToBottom();
+  }
+
+  function parseSuggestions(text) {
+    if (!text) return { cleanText: '', suggestions: [] };
+    var regex = /(?:[\s\[\*\-\•\d\.]*SUGGESTS?[\s\*\]]*:[\s\*]*)([^\]\r\n]+)/i;
+    var match = text.match(regex);
+    if (!match) return { cleanText: text, suggestions: [] };
+    var rawSuggestions = match[1] || '';
+    rawSuggestions = rawSuggestions.replace(/[\]\*]+$/, '').trim();
+    var cleanText = text.replace(match[0], '').trim();
+    cleanText = cleanText.replace(/\[\s*\**\s*$/, '').replace(/\**\s*$/, '').trim();
+    var suggestions = rawSuggestions.split('|').map(function(s) {
+      return s.trim().replace(/^\**|\**$/g, '').trim();
+    }).filter(function(s) {
+      return s.length > 0;
+    });
+    return { cleanText: cleanText, suggestions: suggestions };
   }
 
   function closeChat() {
     chatWin.classList.remove('active');
     bubble.classList.remove('aicb-hidden');
-
-    // Wait for the CSS transition to finish before hiding
-    setTimeout(function () {
-      if (!chatWin.classList.contains('active')) {
-        chatWin.style.display = 'none';
-      }
-    }, 350);
+    bubble.focus(); // Return focus to FAB for accessibility
   }
 
   // ---------------------------------------------------------------------------
-  // 8. Message Creation
+  // 8. Markdown Renderer
   // ---------------------------------------------------------------------------
-  /**
-   * Creates a message bubble and appends it to the messages container.
-   * @param {'user'|'assistant'} role
-   * @param {string} text
-   * @returns {HTMLElement} The created message div
-   */
+  function escapeHtml(str) {
+    var div = document.createElement('div');
+    div.appendChild(document.createTextNode(str));
+    return div.innerHTML;
+  }
+
+  function renderMarkdown(text) {
+    if (!text) return '';
+    // Strip any SUGGEST tag and everything after it to prevent leaks during streaming
+    var cleaned = text.replace(/(?:[\s\[\*\-\•\d\.]*SUGGESTS?[\s\*\]]*:[\s\*]*)([\s\S]*)/i, '').trim();
+    // Clean trailing unfinished formatting characters that might be left right before the tag
+    cleaned = cleaned.replace(/\[\s*\**\s*$/, '').replace(/\**\s*$/, '').trim();
+    if (!cleaned) return '';
+
+    // Escape HTML first to prevent XSS
+    var html = escapeHtml(cleaned);
+
+    // Bold: **text** → <strong>text</strong>
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+
+    // Auto-link URLs (must come before line splitting)
+    html = html.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+
+    // Auto-link email addresses
+    html = html.replace(/([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})/g, '<a href="mailto:$1">$1</a>');
+
+    // Auto-link phone numbers (+212… or 05/06/07… patterns)
+    html = html.replace(/((?:\+\d{1,3}[\s\-]?)?(?:\(\d+\)|\d)[\d\s\-\.]{6,}\d)/g, function(match) {
+      var digits = match.replace(/[^\d+]/g, '');
+      return '<a href="tel:' + digits + '">' + match + '</a>';
+    });
+
+    // Split into lines for list detection
+    var lines = html.split('\n');
+    var result = [];
+    var inList = false;
+    var listType = '';
+
+    for (var i = 0; i < lines.length; i++) {
+      var line = lines[i].trim();
+      var numberedMatch = line.match(/^(\d+)\.\s+(.+)/);
+      var bulletMatch = line.match(/^[-\u2022*]\s+(.+)/);
+
+      if (numberedMatch) {
+        if (!inList || listType !== 'ol') {
+          if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          result.push('<ol>');
+          inList = true;
+          listType = 'ol';
+        }
+        result.push('<li>' + numberedMatch[2] + '</li>');
+      } else if (bulletMatch) {
+        if (!inList || listType !== 'ul') {
+          if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          result.push('<ul>');
+          inList = true;
+          listType = 'ul';
+        }
+        result.push('<li>' + bulletMatch[1] + '</li>');
+      } else {
+        if (inList) {
+          result.push(listType === 'ol' ? '</ol>' : '</ul>');
+          inList = false;
+          listType = '';
+        }
+        if (line === '') {
+          result.push('<br>');
+        } else {
+          result.push('<p>' + line + '</p>');
+        }
+      }
+    }
+    if (inList) result.push(listType === 'ol' ? '</ol>' : '</ul>');
+
+    return result.join('');
+  }
+
+  // ---------------------------------------------------------------------------
+  // 9. Message Creation
+  // ---------------------------------------------------------------------------
   function createMessage(role, text) {
     var div = document.createElement('div');
     div.className = 'aicb-message ' + role;
-    div.textContent = text;
+    if (role === 'assistant') {
+      div.innerHTML = renderMarkdown(text);
+    } else {
+      div.textContent = text;
+    }
     messages.appendChild(div);
     scrollToBottom();
     return div;
@@ -170,9 +300,12 @@ document.addEventListener('DOMContentLoaded', function () {
   // ---------------------------------------------------------------------------
   function scrollToBottom() {
     requestAnimationFrame(function () {
-      messages.scrollTo({
-        top: messages.scrollHeight,
-        behavior: 'smooth'
+      // Double-raf to ensure DOM has painted the new content
+      requestAnimationFrame(function () {
+        messages.scrollTo({
+          top: messages.scrollHeight,
+          behavior: 'smooth'
+        });
       });
     });
   }
@@ -225,11 +358,10 @@ document.addEventListener('DOMContentLoaded', function () {
     var tip = document.createElement('div');
     tip.className = 'aicb-rate-tooltip';
     tip.textContent = 'Please wait a moment...';
-    inputArea.style.position = 'relative';
     inputArea.appendChild(tip);
 
     setTimeout(function () {
-      tip.remove();
+      if (tip.parentNode) tip.remove();
     }, 1500);
   }
 
@@ -254,6 +386,9 @@ document.addEventListener('DOMContentLoaded', function () {
     // Add user message to chat
     createMessage('user', text);
 
+    // Remove any existing suggestion chips
+    removeSuggestionChips();
+
     // Show typing indicator
     showTypingIndicator();
 
@@ -265,8 +400,14 @@ document.addEventListener('DOMContentLoaded', function () {
   // 14. Streaming API Call
   // ---------------------------------------------------------------------------
   async function sendToAPI(message) {
+    // Remove typing indicator early — we'll re-show it only on initial send
+    // (typing indicator is already shown before this call)
+    
     // Create an empty assistant message container for streaming
-    var assistantDiv = createMessage('assistant', '');
+    var assistantDiv = document.createElement('div');
+    assistantDiv.className = 'aicb-message assistant';
+    // Don't append yet — append only once we receive first content
+    var hasAppended = false;
 
     try {
       var response = await fetch(aicb_ajax.rest_url, {
@@ -294,13 +435,16 @@ document.addEventListener('DOMContentLoaded', function () {
       var reader = response.body.getReader();
       var decoder = new TextDecoder();
       var fullText = '';
+      var buffer = '';
 
       while (true) {
         var result = await reader.read();
         if (result.done) break;
 
         var chunk = decoder.decode(result.value, { stream: true });
-        var lines = chunk.split('\n');
+        buffer += chunk;
+        var lines = buffer.split('\n');
+        buffer = lines.pop();
 
         for (var i = 0; i < lines.length; i++) {
           var line = lines[i];
@@ -310,9 +454,27 @@ document.addEventListener('DOMContentLoaded', function () {
 
             try {
               var parsed = JSON.parse(data);
-              if (parsed.content) {
-                fullText += parsed.content;
-                assistantDiv.textContent = fullText;
+              
+              // Try to find the content in various possible formats
+              var deltaContent = parsed.content; // Custom simplified format
+              
+              if (!deltaContent && parsed.choices && parsed.choices[0] && parsed.choices[0].delta) {
+                deltaContent = parsed.choices[0].delta.content; // Raw OpenAI/Groq format
+              }
+              
+              if (!deltaContent && parsed.candidates && parsed.candidates[0] && parsed.candidates[0].content && parsed.candidates[0].content.parts) {
+                deltaContent = parsed.candidates[0].content.parts[0].text; // Raw Gemini format
+              }
+
+              if (deltaContent) {
+                // On first content chunk, remove typing indicator and append message div
+                if (!hasAppended) {
+                  removeTypingIndicator();
+                  messages.appendChild(assistantDiv);
+                  hasAppended = true;
+                }
+                fullText += deltaContent;
+                assistantDiv.innerHTML = renderMarkdown(fullText);
                 scrollToBottom();
               }
             } catch (e) {
@@ -324,13 +486,30 @@ document.addEventListener('DOMContentLoaded', function () {
 
       // If the stream completed but we got no text, show a fallback
       if (!fullText) {
-        assistantDiv.textContent = "I'm sorry, I didn't get a response. Please try again.";
+        removeTypingIndicator();
+        if (!hasAppended) {
+          messages.appendChild(assistantDiv);
+          hasAppended = true;
+        }
+        assistantDiv.innerHTML = renderMarkdown("I'm sorry, I didn't get a response. Please try again.");
+      } else {
+        // Parse and display suggestion chips if present
+        var parsedSuggestions = parseSuggestions(fullText);
+        assistantDiv.innerHTML = renderMarkdown(parsedSuggestions.cleanText);
+        if (parsedSuggestions.suggestions.length > 0) {
+          createSuggestionChips(parsedSuggestions.suggestions);
+        }
       }
     } catch (error) {
       console.error('[AICB] API error:', error);
-      assistantDiv.textContent = 'Sorry, something went wrong. Please try again.';
-    } finally {
       removeTypingIndicator();
+      if (!hasAppended) {
+        messages.appendChild(assistantDiv);
+        hasAppended = true;
+      }
+      assistantDiv.innerHTML = renderMarkdown('Sorry, something went wrong. Please try again.');
+    } finally {
+      removeTypingIndicator(); // Safety net — remove if still showing
       enableInput();
     }
   }
@@ -350,6 +529,13 @@ document.addEventListener('DOMContentLoaded', function () {
 
   // Close button → close
   closeBtn.addEventListener('click', closeChat);
+
+  // Escape key → close
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && chatWin.classList.contains('active')) {
+      closeChat();
+    }
+  });
 
   // Send button → send
   sendBtn.addEventListener('click', sendMessage);

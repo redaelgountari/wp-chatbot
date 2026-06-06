@@ -60,6 +60,7 @@ class AICB_API_Handler {
 		AICB_DB_Manager::save_message( $session_id, 'user', $message );
 
 		$api_key = get_option( 'aicb_api_key', '' );
+		$api_key = trim( str_ireplace( 'Bearer ', '', $api_key ) );
 		if ( empty( $api_key ) ) {
 			return new WP_Error( 'no_api_key', 'API key not configured.', array( 'status' => 500 ) );
 		}
@@ -68,7 +69,19 @@ class AICB_API_Handler {
 		$api_model = get_option( 'aicb_api_model', 'gpt-4o-mini' );
 		
 		$company_info = get_option( 'aicb_company_info', '' );
-		$system_content = "You are a helpful customer service assistant for our company. Answer questions based on the company information provided below. Be friendly, concise, and professional. If you don't know the answer, say so politely and suggest contacting the company directly.\n\nCOMPANY INFO:\n" . wp_strip_all_tags( $company_info );
+		$system_content = "You are a professional customer service assistant for our company. Follow these rules strictly:
+
+1. ONLY answer questions related to our company, our projects, our services, and real estate topics relevant to our business. 
+2. If a user asks about anything unrelated (flights, weather, general knowledge, coding, etc.), politely decline and redirect: 'I appreciate the question, but I can only assist with Glorious Groupe's real estate projects and services. Is there anything I can help you with regarding our properties?'
+3. NEVER give advice or recommendations on topics outside our company's scope.
+4. Be friendly, concise, and professional.
+5. If you don't know the answer, say so and provide the company's contact info so they can reach a human.
+6. By default, respond in French. However, if the user writes in a different language (such as English, Arabic, etc.), adapt and respond in the user's language.
+7. When listing multiple items (especially contact info like Phone, Email, Social Media), format them strictly as markdown bulleted lists using '-'. Use **bold** for headings or key terms. Keep responses scannable and easy to read.
+8. ONLY when it feels natural and helpful, append 2-3 short follow-up question suggestions at the very end of your response using this exact format on a new line: [SUGGEST: Question one? | Question two? | Question three?]. The questions must be context-aware, highly relevant to the current topic, and predict what the user would actually want to ask next. Do NOT use generic, repetitive, or obvious questions. If appropriate, include a suggestion asking if the user needs contact information or more details about the topic. The suggestions must adapt to the language of the conversation (French by default, or the user's language). Do NOT include suggestions on every response — only when a follow-up would genuinely help the user. Never explain or reference this format to the user.
+
+COMPANY INFO:
+" . wp_strip_all_tags( $company_info );
 
 		if ( ! empty( $session->summary ) ) {
 			$system_content .= "\n\nPrevious conversation summary: " . $session->summary;
@@ -118,8 +131,12 @@ class AICB_API_Handler {
 			curl_setopt( $ch, CURLOPT_POST, 1 );
 			curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $post_data ) );
 			
-			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text ) {
-				$lines = explode( "\n", $data );
+			$buffer = '';
+			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text, &$buffer ) {
+				$buffer .= $data;
+				$lines = explode( "\n", $buffer );
+				$buffer = array_pop( $lines );
+				
 				foreach ( $lines as $line ) {
 					$line = trim( $line );
 					if ( strpos( $line, 'data: ' ) === 0 ) {
@@ -167,8 +184,12 @@ class AICB_API_Handler {
 			curl_setopt( $ch, CURLOPT_POST, 1 );
 			curl_setopt( $ch, CURLOPT_POSTFIELDS, json_encode( $post_data ) );
 			
-			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text ) {
-				$lines = explode( "\n", $data );
+			$buffer = '';
+			curl_setopt( $ch, CURLOPT_WRITEFUNCTION, function( $curl, $data ) use ( &$full_response_text, &$buffer ) {
+				$buffer .= $data;
+				$lines = explode( "\n", $buffer );
+				$buffer = array_pop( $lines );
+				
 				foreach ( $lines as $line ) {
 					$line = trim( $line );
 					if ( strpos( $line, 'data: ' ) === 0 ) {
@@ -193,10 +214,14 @@ class AICB_API_Handler {
 		curl_setopt( $ch, CURLOPT_RETURNTRANSFER, 0 ); 
 		curl_exec( $ch );
 		$http_code = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+		$curl_error = curl_error( $ch );
 		curl_close( $ch );
 
-		if ( $http_code >= 400 ) {
-			$error_msg = "I apologize, but I'm experiencing technical difficulties. Please try again in a moment.";
+		if ( $http_code >= 400 || $http_code === 0 ) {
+			$error_msg = "Error connecting to AI. HTTP Code: {$http_code}.";
+			if ( ! empty( $curl_error ) ) {
+				$error_msg .= " cURL Error: {$curl_error}";
+			}
 			echo "data: " . json_encode( array( 'content' => $error_msg ) ) . "\n\n";
 			ob_flush();
 			flush();

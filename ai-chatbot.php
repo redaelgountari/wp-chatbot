@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AI Chatbot
  * Description: An AI-powered chatbot that answers visitor questions using your company info.
- * Version: 1.0.0
+ * Version: 1.0.4
  * Author: AI Chatbot
  */
 
@@ -10,7 +10,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'AICB_VERSION', '1.0.0' );
+define( 'AICB_VERSION', '1.0.4' );
 define( 'AICB_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'AICB_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -83,8 +83,10 @@ function aicb_enqueue_frontend_assets() {
 	}, 10, 2 );
 
 	wp_localize_script( 'aicb-chatbot', 'aicb_ajax', array(
-		'rest_url' => rest_url( 'aicb/v1/chat' ),
-		'nonce'    => wp_create_nonce( 'wp_rest' ),
+		'rest_url'        => rest_url( 'aicb/v1/chat' ),
+		'nonce'           => wp_create_nonce( 'wp_rest' ),
+		'bot_name'        => get_option( 'aicb_bot_name', 'AI Assistant' ),
+		'welcome_message' => get_option( 'aicb_welcome_message', "Bonjour ! 👋 Comment puis-je vous aider aujourd'hui ?" ),
 	) );
 }
 add_action( 'wp_enqueue_scripts', 'aicb_enqueue_frontend_assets' );
